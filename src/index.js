@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
-const { createObjectCsvWriter } = require("csv-writer");
+const { createObjectCsvStringifier } = require("csv-writer");
 
 const urls = fs
   .readFileSync("urls.txt", "utf-8")
@@ -107,8 +107,7 @@ async function writeCsv(results) {
     `udemy_courses_${getTimestampString()}.csv`
   );
 
-  const csvWriter = createObjectCsvWriter({
-    path: outputPath,
+  const csvStringifier = createObjectCsvStringifier({
     header: [
       { id: "course_url", title: "course_url" },
       { id: "title", title: "title" },
@@ -125,7 +124,12 @@ async function writeCsv(results) {
     ],
   });
 
-  await csvWriter.writeRecords(results);
+  const csvContent =
+    "\uFEFF" +
+    csvStringifier.getHeaderString() +
+    csvStringifier.stringifyRecords(results);
+
+  fs.writeFileSync(outputPath, csvContent, "utf8");
 
   return outputPath;
 }
