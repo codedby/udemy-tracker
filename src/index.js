@@ -57,6 +57,10 @@ function getTimestampString() {
   return `${year}-${month}-${day}_${hour}-${minute}-${second}`;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function scrapeCourse(page, courseUrl) {
   console.log("Opening:", courseUrl);
 
@@ -137,18 +141,28 @@ async function writeCsv(results) {
 async function main() {
   console.log(`Found ${urls.length} URL(s)`);
 
-  const browser = await chromium.launch({
-    headless: false,
-  });
-
-  const page = await browser.newPage();
-
   const results = [];
 
-  for (const url of urls) {
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i];
+
+    if (i > 0) {
+      console.log("Waiting 45 seconds before next course...");
+      await sleep(45000);
+    }
+
+    let browser;
+
     try {
+      browser = await chromium.launch({
+        headless: false,
+      });
+
+      const page = await browser.newPage();
+
       const result = await scrapeCourse(page, url);
       results.push(result);
+
       console.log("Success:", result.title);
     } catch (error) {
       console.error("Failed:", url);
@@ -168,10 +182,12 @@ async function main() {
         status: "failed",
         error: error.message,
       });
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
     }
   }
-
-  await browser.close();
 
   const outputPath = await writeCsv(results);
 
