@@ -295,6 +295,7 @@ async function main() {
   const csvStringifier = createCsvStringifier();
 
   fs.writeFileSync(outputPath, "\uFEFF" + csvStringifier.getHeaderString(), "utf8");
+  const instructorCache = new Map();
 
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
@@ -309,13 +310,20 @@ async function main() {
     try {
       const courseData = await scrapeCourse(url);
 
-      let instructorData = {};
+    let instructorData = {};
 
-      if (courseData.instructor_id) {
+    if (courseData.instructor_id) {
+      if (instructorCache.has(courseData.instructor_id)) {
+        console.log("Using cached instructor data:", courseData.instructor_id);
+        instructorData = instructorCache.get(courseData.instructor_id);
+      } else {
         console.log("Waiting 20 seconds before instructor API...");
         await sleep(20000);
+
         instructorData = await scrapeInstructor(courseData.instructor_id);
+        instructorCache.set(courseData.instructor_id, instructorData);
       }
+    }
 
       row = {
         ...courseData,
