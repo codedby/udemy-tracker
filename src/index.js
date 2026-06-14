@@ -3,6 +3,16 @@ const path = require("path");
 const { chromium } = require("playwright");
 const { createObjectCsvStringifier } = require("csv-writer");
 const config = require("./config");
+class AccessBlockedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "AccessBlockedError";
+  }
+}
+
+function isAccessBlockedError(error) {
+  return error instanceof AccessBlockedError;
+}
 
 function normalizeCourseUrl(url) {
   try {
@@ -121,8 +131,12 @@ async function runWithOneRetry(task, label) {
   try {
     return await task();
   } catch (firstError) {
-    console.error(`${label} failed on first attempt:`);
-    console.error(firstError.message);
+    if (isAccessBlockedError(firstError)) {
+      throw firstError;
+    }
+
+    console.log(`${label} failed. Retrying once...`);
+    console.log(firstError.message);
 
     const retryDelayMs = getRandomDelay(
       config.RETRY_DELAY_MIN_MS,
@@ -132,11 +146,16 @@ async function runWithOneRetry(task, label) {
     console.log(
       `Waiting ${Math.round(retryDelayMs / 1000)} seconds before retry...`,
     );
+
     await sleep(retryDelayMs);
 
     try {
       return await task();
     } catch (secondError) {
+      if (isAccessBlockedError(secondError)) {
+        throw secondError;
+      }
+
       throw new Error(
         `${label} failed after retry. First error: ${firstError.message}. Second error: ${secondError.message}`,
       );
@@ -217,12 +236,30 @@ async function scrapeCourse(courseUrl) {
 
     console.log("Opening course:", courseUrl);
 
-    await page.goto(courseUrl, {
+    const response = await page.goto(courseUrl, {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
 
     await page.waitForTimeout(5000);
+
+const status = response?.status();
+const bodyText = await page.locator("body").innerText();
+const lowerBodyText = bodyText.toLowerCase();
+
+    if (
+      status === 403 ||
+      lowerBodyText.includes("cloudflare") ||
+      lowerBodyText.includes("attention required")
+    ) {
+      throw new AccessBlockedError(
+        `Course page access blocked. Status: ${status}`,
+      );
+    }
+
+    if (!response || status >= 400) {
+      throw new Error(`Course page returned status ${status}`);
+    }
 
     const structuredDataText = await page
       .locator('script[type="application/ld+json"]')
@@ -240,7 +277,7 @@ async function scrapeCourse(courseUrl) {
 
     const courseInstance = firstItem(course.hasCourseInstance);
     const aggregateRating = course.aggregateRating || {};
-    const pageText = await page.locator("body").innerText();
+    const pageText = bodyText;
     const html = await page.content();
     const instructorId = extractInstructorIdFromHtml(html);
 
@@ -285,13 +322,23 @@ async function scrapeInstructor(instructorId) {
       timeout: 60000,
     });
 
-    const status = response.status();
+    const status = response?.status();
+    const bodyText = await page.locator("body").innerText();
+    const lowerBodyText = bodyText.toLowerCase();
 
-    if (status !== 200) {
-      throw new Error(`Instructor API returned status ${status}`);
+    if (
+      status === 403 ||
+      lowerBodyText.includes("cloudflare") ||
+      lowerBodyText.includes("attention required")
+    ) {
+      throw new AccessBlockedError(
+        `Instructor API access blocked. Status: ${status}`,
+      );
     }
 
-    const bodyText = await page.locator("body").innerText();
+    if (!response || status >= 400) {
+      throw new Error(`Instructor API returned status ${status}`);
+    }
     const data = JSON.parse(bodyText);
 
     const firstCourse = data.results?.[0];
@@ -359,6 +406,7 @@ async function main() {
     }
 
     let row;
+    let shouldStopRun = false;
 
     try {
       const courseData = await runWithOneRetry(
@@ -433,10 +481,19 @@ async function main() {
         status: "failed",
         error: error.message,
       };
+
+      if (isAccessBlockedError(error)) {
+        shouldStopRun = true;
+      }
     }
 
     appendRowToCsv(outputPath, csvStringifier, row);
     console.log("Row saved to CSV");
+
+    if (shouldStopRun) {
+      console.error("Access blocked detected. Stopping the run.");
+      break;
+    }
   }
 
   console.log(`CSV saved to: ${outputPath}`);
