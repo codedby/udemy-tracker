@@ -126,6 +126,53 @@ function getTimestampString() {
   return `${year}-${month}-${day}_${hour}-${minute}-${second}`;
 }
 
+function createOutputPath() {
+  fs.mkdirSync("output", { recursive: true });
+
+  return path.join(
+    "output",
+    `udemy_courses_${getTimestampString()}.csv`
+  );
+}
+
+function createCsvStringifier() {
+  return createObjectCsvStringifier({
+    header: [
+      { id: "course_url", title: "course_url" },
+      { id: "title", title: "title" },
+      { id: "instructor", title: "instructor" },
+      { id: "rating", title: "rating" },
+      { id: "reviews_count", title: "reviews_count" },
+      { id: "students_count", title: "students_count" },
+      { id: "duration_hours", title: "duration_hours" },
+      { id: "language", title: "language" },
+      { id: "date_published", title: "date_published" },
+      { id: "instructor_id", title: "instructor_id" },
+      { id: "instructor_name", title: "instructor_name" },
+      { id: "instructor_job_title", title: "instructor_job_title" },
+      { id: "instructor_url", title: "instructor_url" },
+      { id: "instructor_rating", title: "instructor_rating" },
+      { id: "instructor_recent_rating", title: "instructor_recent_rating" },
+      { id: "instructor_total_students", title: "instructor_total_students" },
+      { id: "instructor_total_courses", title: "instructor_total_courses" },
+      {
+        id: "instructor_visible_taught_courses",
+        title: "instructor_visible_taught_courses",
+      },
+      { id: "instructor_total_reviews", title: "instructor_total_reviews" },
+      { id: "instructor_about", title: "instructor_about" },
+      { id: "scraped_at", title: "scraped_at" },
+      { id: "status", title: "status" },
+      { id: "error", title: "error" },
+    ],
+  });
+}
+
+function appendRowToCsv(outputPath, csvStringifier, row) {
+  const csvRow = csvStringifier.stringifyRecords([row]);
+  fs.appendFileSync(outputPath, csvRow, "utf8");
+}
+
 async function scrapeCourse(courseUrl) {
   let browser;
 
@@ -241,59 +288,13 @@ async function scrapeInstructor(instructorId) {
   }
 }
 
-async function writeCsv(results) {
-  fs.mkdirSync("output", { recursive: true });
-
-  const outputPath = path.join(
-    "output",
-    `udemy_courses_${getTimestampString()}.csv`
-  );
-
-  const csvStringifier = createObjectCsvStringifier({
-    header: [
-      { id: "course_url", title: "course_url" },
-      { id: "title", title: "title" },
-      { id: "instructor", title: "instructor" },
-      { id: "rating", title: "rating" },
-      { id: "reviews_count", title: "reviews_count" },
-      { id: "students_count", title: "students_count" },
-      { id: "duration_hours", title: "duration_hours" },
-      { id: "language", title: "language" },
-      { id: "date_published", title: "date_published" },
-      { id: "instructor_id", title: "instructor_id" },
-      { id: "instructor_name", title: "instructor_name" },
-      { id: "instructor_job_title", title: "instructor_job_title" },
-      { id: "instructor_url", title: "instructor_url" },
-      { id: "instructor_rating", title: "instructor_rating" },
-      { id: "instructor_recent_rating", title: "instructor_recent_rating" },
-      { id: "instructor_total_students", title: "instructor_total_students" },
-      { id: "instructor_total_courses", title: "instructor_total_courses" },
-      {
-        id: "instructor_visible_taught_courses",
-        title: "instructor_visible_taught_courses",
-      },
-      { id: "instructor_total_reviews", title: "instructor_total_reviews" },
-      { id: "instructor_about", title: "instructor_about" },
-      { id: "scraped_at", title: "scraped_at" },
-      { id: "status", title: "status" },
-      { id: "error", title: "error" },
-    ],
-  });
-
-  const csvContent =
-    "\uFEFF" +
-    csvStringifier.getHeaderString() +
-    csvStringifier.stringifyRecords(results);
-
-  fs.writeFileSync(outputPath, csvContent, "utf8");
-
-  return outputPath;
-}
-
 async function main() {
   console.log(`Found ${rawUrls.length} URL(s), ${urls.length} unique URL(s)`);
 
-  const results = [];
+  const outputPath = createOutputPath();
+  const csvStringifier = createCsvStringifier();
+
+  fs.writeFileSync(outputPath, "\uFEFF" + csvStringifier.getHeaderString(), "utf8");
 
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
@@ -302,6 +303,8 @@ async function main() {
       console.log("Waiting 45 seconds before next course...");
       await sleep(45000);
     }
+
+    let row;
 
     try {
       const courseData = await scrapeCourse(url);
@@ -314,7 +317,7 @@ async function main() {
         instructorData = await scrapeInstructor(courseData.instructor_id);
       }
 
-      const result = {
+      row = {
         ...courseData,
         ...instructorData,
         scraped_at: new Date().toISOString(),
@@ -322,14 +325,12 @@ async function main() {
         error: "",
       };
 
-      results.push(result);
-
-      console.log("Success:", result.title);
+      console.log("Success:", row.title);
     } catch (error) {
       console.error("Failed:", url);
       console.error(error.message);
 
-      results.push({
+      row = {
         course_url: url,
         title: "",
         instructor: "",
@@ -353,11 +354,12 @@ async function main() {
         scraped_at: new Date().toISOString(),
         status: "failed",
         error: error.message,
-      });
+      };
     }
-  }
 
-  const outputPath = await writeCsv(results);
+    appendRowToCsv(outputPath, csvStringifier, row);
+    console.log("Row saved to CSV");
+  }
 
   console.log(`CSV saved to: ${outputPath}`);
 }
