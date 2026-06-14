@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
 const { createObjectCsvStringifier } = require("csv-writer");
+const config = require("./config");
 
 function normalizeCourseUrl(url) {
   try {
@@ -112,6 +113,10 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getRandomDelay(minMs, maxMs) {
+  return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+}
+
 async function runWithOneRetry(task, label) {
   try {
     return await task();
@@ -119,8 +124,15 @@ async function runWithOneRetry(task, label) {
     console.error(`${label} failed on first attempt:`);
     console.error(firstError.message);
 
-    console.log("Waiting 90 seconds before retry...");
-    await sleep(90000);
+    const retryDelayMs = getRandomDelay(
+      config.RETRY_DELAY_MIN_MS,
+      config.RETRY_DELAY_MAX_MS,
+    );
+
+    console.log(
+      `Waiting ${Math.round(retryDelayMs / 1000)} seconds before retry...`,
+    );
+    await sleep(retryDelayMs);
 
     try {
       return await task();
@@ -312,6 +324,13 @@ async function scrapeInstructor(instructorId) {
 
 async function main() {
   console.log(`Found ${rawUrls.length} URL(s), ${urls.length} unique URL(s)`);
+  const urlsToProcess = urls.slice(0, config.MAX_COURSES_PER_RUN);
+
+  if (urls.length > config.MAX_COURSES_PER_RUN) {
+    console.log(
+      `Only processing first ${config.MAX_COURSES_PER_RUN} course(s) in this run.`,
+    );
+  }
 
   const outputPath = createOutputPath();
   const csvStringifier = createCsvStringifier();
@@ -323,12 +342,20 @@ async function main() {
   );
   const instructorCache = new Map();
 
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i];
+  for (let i = 0; i < urlsToProcess.length; i++) {
+    const url = urlsToProcess[i];
 
     if (i > 0) {
-      console.log("Waiting 45 seconds before next course...");
-      await sleep(45000);
+      const courseDelayMs = getRandomDelay(
+        config.COURSE_DELAY_MIN_MS,
+        config.COURSE_DELAY_MAX_MS,
+      );
+
+      console.log(
+        `Waiting ${Math.round(courseDelayMs / 1000)} seconds before next course...`,
+      );
+
+      await sleep(courseDelayMs);
     }
 
     let row;
@@ -349,8 +376,16 @@ async function main() {
           );
           instructorData = instructorCache.get(courseData.instructor_id);
         } else {
-          console.log("Waiting 20 seconds before instructor API...");
-          await sleep(20000);
+          const instructorDelayMs = getRandomDelay(
+            config.INSTRUCTOR_DELAY_MIN_MS,
+            config.INSTRUCTOR_DELAY_MAX_MS,
+          );
+
+          console.log(
+            `Waiting ${Math.round(instructorDelayMs / 1000)} seconds before instructor API...`,
+          );
+
+          await sleep(instructorDelayMs);
 
           instructorData = await runWithOneRetry(
             () => scrapeInstructor(courseData.instructor_id),
