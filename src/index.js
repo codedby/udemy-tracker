@@ -3,11 +3,32 @@ const path = require("path");
 const { chromium } = require("playwright");
 const { createObjectCsvStringifier } = require("csv-writer");
 
-const urls = fs
+function normalizeCourseUrl(url) {
+  try {
+    const parsedUrl = new URL(url.trim());
+
+    parsedUrl.hash = "";
+    parsedUrl.search = "";
+
+    let normalizedUrl = parsedUrl.toString();
+
+    if (!normalizedUrl.endsWith("/")) {
+      normalizedUrl += "/";
+    }
+
+    return normalizedUrl;
+  } catch {
+    return url.trim();
+  }
+}
+
+const rawUrls = fs
   .readFileSync("urls.txt", "utf-8")
   .split(/\r?\n/)
   .map((line) => line.trim())
-  .filter(Boolean);
+  .filter((line) => line && !line.startsWith("#"));
+
+const urls = [...new Set(rawUrls.map(normalizeCourseUrl))];
 
 function firstItem(value) {
   if (Array.isArray(value)) return value[0];
@@ -270,7 +291,7 @@ async function writeCsv(results) {
 }
 
 async function main() {
-  console.log(`Found ${urls.length} URL(s)`);
+  console.log(`Found ${rawUrls.length} URL(s), ${urls.length} unique URL(s)`);
 
   const results = [];
 
