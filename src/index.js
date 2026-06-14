@@ -38,7 +38,10 @@ function firstItem(value) {
 function getNameList(value) {
   if (!value) return "";
   const items = Array.isArray(value) ? value : [value];
-  return items.map((item) => item.name).filter(Boolean).join(", ");
+  return items
+    .map((item) => item.name)
+    .filter(Boolean)
+    .join(", ");
 }
 
 function parseIsoDuration(duration) {
@@ -109,6 +112,26 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function runWithOneRetry(task, label) {
+  try {
+    return await task();
+  } catch (firstError) {
+    console.error(`${label} failed on first attempt:`);
+    console.error(firstError.message);
+
+    console.log("Waiting 90 seconds before retry...");
+    await sleep(90000);
+
+    try {
+      return await task();
+    } catch (secondError) {
+      throw new Error(
+        `${label} failed after retry. First error: ${firstError.message}. Second error: ${secondError.message}`,
+      );
+    }
+  }
+}
+
 function pad(value) {
   return String(value).padStart(2, "0");
 }
@@ -129,10 +152,7 @@ function getTimestampString() {
 function createOutputPath() {
   fs.mkdirSync("output", { recursive: true });
 
-  return path.join(
-    "output",
-    `udemy_courses_${getTimestampString()}.csv`
-  );
+  return path.join("output", `udemy_courses_${getTimestampString()}.csv`);
 }
 
 function createCsvStringifier() {
@@ -270,14 +290,16 @@ async function scrapeInstructor(instructorId) {
     }
 
     return {
-      instructor_name: instructor.display_name || instructor.title || instructor.name || "",
+      instructor_name:
+        instructor.display_name || instructor.title || instructor.name || "",
       instructor_job_title: instructor.job_title || "",
       instructor_url: instructor.url || "",
       instructor_rating: instructor.avg_rating || "",
       instructor_recent_rating: instructor.avg_rating_recent || "",
       instructor_total_students: instructor.total_num_students || "",
       instructor_total_courses: instructor.num_published_courses || "",
-      instructor_visible_taught_courses: instructor.num_visible_taught_courses || "",
+      instructor_visible_taught_courses:
+        instructor.num_visible_taught_courses || "",
       instructor_total_reviews: instructor.total_num_reviews || "",
       instructor_about: stripHtml(instructor.description || ""),
     };
@@ -294,7 +316,11 @@ async function main() {
   const outputPath = createOutputPath();
   const csvStringifier = createCsvStringifier();
 
-  fs.writeFileSync(outputPath, "\uFEFF" + csvStringifier.getHeaderString(), "utf8");
+  fs.writeFileSync(
+    outputPath,
+    "\uFEFF" + csvStringifier.getHeaderString(),
+    "utf8",
+  );
   const instructorCache = new Map();
 
   for (let i = 0; i < urls.length; i++) {
@@ -308,22 +334,31 @@ async function main() {
     let row;
 
     try {
-      const courseData = await scrapeCourse(url);
+      const courseData = await runWithOneRetry(
+        () => scrapeCourse(url),
+        `Course scrape for ${url}`,
+      );
 
-    let instructorData = {};
+      let instructorData = {};
 
-    if (courseData.instructor_id) {
-      if (instructorCache.has(courseData.instructor_id)) {
-        console.log("Using cached instructor data:", courseData.instructor_id);
-        instructorData = instructorCache.get(courseData.instructor_id);
-      } else {
-        console.log("Waiting 20 seconds before instructor API...");
-        await sleep(20000);
+      if (courseData.instructor_id) {
+        if (instructorCache.has(courseData.instructor_id)) {
+          console.log(
+            "Using cached instructor data:",
+            courseData.instructor_id,
+          );
+          instructorData = instructorCache.get(courseData.instructor_id);
+        } else {
+          console.log("Waiting 20 seconds before instructor API...");
+          await sleep(20000);
 
-        instructorData = await scrapeInstructor(courseData.instructor_id);
-        instructorCache.set(courseData.instructor_id, instructorData);
+          instructorData = await runWithOneRetry(
+            () => scrapeInstructor(courseData.instructor_id),
+            `Instructor scrape for ${courseData.instructor_id}`,
+          );
+          instructorCache.set(courseData.instructor_id, instructorData);
+        }
       }
-    }
 
       row = {
         ...courseData,
