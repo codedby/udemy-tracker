@@ -243,9 +243,9 @@ async function scrapeCourse(courseUrl) {
 
     await page.waitForTimeout(5000);
 
-const status = response?.status();
-const bodyText = await page.locator("body").innerText();
-const lowerBodyText = bodyText.toLowerCase();
+    const status = response?.status();
+    const bodyText = await page.locator("body").innerText();
+    const lowerBodyText = bodyText.toLowerCase();
 
     if (
       status === 403 ||
@@ -388,6 +388,9 @@ async function main() {
     "utf8",
   );
   const instructorCache = new Map();
+  let successCount = 0;
+  let failedCount = 0;
+  let stoppedBecauseBlocked = false;
 
   for (let i = 0; i < urlsToProcess.length; i++) {
     const url = urlsToProcess[i];
@@ -452,6 +455,7 @@ async function main() {
       };
 
       console.log("Success:", row.title);
+      successCount++;
     } catch (error) {
       console.error("Failed:", url);
       console.error(error.message);
@@ -482,8 +486,13 @@ async function main() {
         error: error.message,
       };
 
+      failedCount++;
+
+      failedCount++;
+
       if (isAccessBlockedError(error)) {
         shouldStopRun = true;
+        stoppedBecauseBlocked = true;
       }
     }
 
@@ -496,7 +505,14 @@ async function main() {
     }
   }
 
-  console.log(`CSV saved to: ${outputPath}`);
+  console.log("");
+  console.log("Run finished");
+  console.log(`Successful: ${successCount}`);
+  console.log(`Failed: ${failedCount}`);
+  console.log(
+    `Stopped because blocked: ${stoppedBecauseBlocked ? "Yes" : "No"}`,
+  );
+  console.log(`CSV: ${outputPath}`);
 }
 
 main().catch((error) => {
