@@ -369,6 +369,92 @@ async function scrapeInstructor(instructorId) {
   }
 }
 
+const ESTIMATED_PROCESSING_MS_PER_COURSE = 10000;
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+}
+
+function createDelayPlan(totalCourses) {
+  return Array.from({ length: totalCourses }, (_, index) => ({
+    courseDelayMs:
+      index === 0
+        ? 0
+        : getRandomDelay(
+            config.COURSE_DELAY_MIN_MS,
+            config.COURSE_DELAY_MAX_MS,
+          ),
+    instructorDelayMs: getRandomDelay(
+      config.INSTRUCTOR_DELAY_MIN_MS,
+      config.INSTRUCTOR_DELAY_MAX_MS,
+    ),
+  }));
+}
+
+function getRemainingPlannedDelayMs(delayPlan, completedCount) {
+  return delayPlan
+    .slice(completedCount)
+    .reduce(
+      (total, item) => total + item.courseDelayMs + item.instructorDelayMs,
+      0,
+    );
+}
+
+function buildProgressPayload({
+  delayPlan,
+  startedAtMs,
+  currentCourseNumber,
+  currentUrl,
+  successCount,
+  failedCount,
+  status,
+}) {
+  const completedCount = successCount + failedCount;
+  const totalCourses = delayPlan.length;
+  const elapsedMs = Date.now() - startedAtMs;
+  const remainingCourses = Math.max(0, totalCourses - completedCount);
+
+  const estimatedRemainingMs =
+    getRemainingPlannedDelayMs(delayPlan, completedCount) +
+    remainingCourses * ESTIMATED_PROCESSING_MS_PER_COURSE;
+
+  const estimatedTotalMs = elapsedMs + estimatedRemainingMs;
+
+  return {
+    currentCourseNumber,
+    totalCourses,
+    completedCount,
+    successCount,
+    failedCount,
+    currentUrl,
+    status,
+    elapsedMs,
+    elapsedText: formatDuration(elapsedMs),
+    estimatedTotalMs,
+    estimatedTotalText: formatDuration(estimatedTotalMs),
+    estimatedRemainingMs,
+    estimatedRemainingText: formatDuration(estimatedRemainingMs),
+    etaAssumption: "Assuming no retries or blocks",
+  };
+}
+
+function emitProgress(payload) {
+  console.log(`__PROGRESS__ ${JSON.stringify(payload)}`);
+}
+
 async function main() {
   console.log(`Found ${rawUrls.length} URL(s), ${urls.length} unique URL(s)`);
   const urlsToProcess = urls.slice(0, config.MAX_COURSES_PER_RUN);
@@ -379,6 +465,17 @@ async function main() {
     );
   }
 
+  const delayPlan = createDelayPlan(urlsToProcess.length);
+  const startedAtMs = Date.now();
+
+  const initialEstimatedTotalMs =
+    getRemainingPlannedDelayMs(delayPlan, 0) +
+    urlsToProcess.length * ESTIMATED_PROCESSING_MS_PER_COURSE;
+
+  console.log(
+    `Estimated total duration: ${formatDuration(initialEstimatedTotalMs)} assuming no retries or blocks`,
+  );
+
   const outputPath = createOutputPath();
   const csvStringifier = createCsvStringifier();
 
@@ -387,19 +484,45 @@ async function main() {
     "\uFEFF" + csvStringifier.getHeaderString(),
     "utf8",
   );
+
   const instructorCache = new Map();
   let successCount = 0;
   let failedCount = 0;
   let stoppedBecauseBlocked = false;
 
+  emitProgress(
+    buildProgressPayload({
+      delayPlan,
+      startedAtMs,
+      currentCourseNumber: 0,
+      currentUrl: "",
+      successCount,
+      failedCount,
+      status: "Starting scraper",
+    }),
+  );
+
   for (let i = 0; i < urlsToProcess.length; i++) {
     const url = urlsToProcess[i];
+    const currentCourseNumber = i + 1;
+
+    emitProgress(
+      buildProgressPayload({
+        delayPlan,
+        startedAtMs,
+        currentCourseNumber,
+        currentUrl: url,
+        successCount,
+        failedCount,
+        status: `Processing course ${currentCourseNumber} of ${urlsToProcess.length}`,
+      }),
+    );
+
+    console.log("");
+    console.log(`Course ${currentCourseNumber}/${urlsToProcess.length}: ${url}`);
 
     if (i > 0) {
-      const courseDelayMs = getRandomDelay(
-        config.COURSE_DELAY_MIN_MS,
-        config.COURSE_DELAY_MAX_MS,
-      );
+      const courseDelayMs = delayPlan[i].courseDelayMs;
 
       console.log(
         `Waiting ${Math.round(courseDelayMs / 1000)} seconds before next course...`,
@@ -427,10 +550,7 @@ async function main() {
           );
           instructorData = instructorCache.get(courseData.instructor_id);
         } else {
-          const instructorDelayMs = getRandomDelay(
-            config.INSTRUCTOR_DELAY_MIN_MS,
-            config.INSTRUCTOR_DELAY_MAX_MS,
-          );
+          const instructorDelayMs = delayPlan[i].instructorDelayMs;
 
           console.log(
             `Waiting ${Math.round(instructorDelayMs / 1000)} seconds before instructor API...`,
@@ -488,8 +608,6 @@ async function main() {
 
       failedCount++;
 
-      failedCount++;
-
       if (isAccessBlockedError(error)) {
         shouldStopRun = true;
         stoppedBecauseBlocked = true;
@@ -498,6 +616,21 @@ async function main() {
 
     appendRowToCsv(outputPath, csvStringifier, row);
     console.log("Row saved to CSV");
+
+    emitProgress(
+      buildProgressPayload({
+        delayPlan,
+        startedAtMs,
+        currentCourseNumber,
+        currentUrl: url,
+        successCount,
+        failedCount,
+        status:
+          row.status === "success"
+            ? `Course ${currentCourseNumber} saved`
+            : `Course ${currentCourseNumber} failed`,
+      }),
+    );
 
     if (shouldStopRun) {
       console.error("Access blocked detected. Stopping the run.");
@@ -513,6 +646,18 @@ async function main() {
     `Stopped because blocked: ${stoppedBecauseBlocked ? "Yes" : "No"}`,
   );
   console.log(`CSV: ${outputPath}`);
+
+  emitProgress(
+    buildProgressPayload({
+      delayPlan,
+      startedAtMs,
+      currentCourseNumber: urlsToProcess.length,
+      currentUrl: "",
+      successCount,
+      failedCount,
+      status: "Run finished",
+    }),
+  );
 }
 
 main().catch((error) => {

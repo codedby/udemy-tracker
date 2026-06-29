@@ -50,10 +50,8 @@ app.get("/api/urls", (req, res) => {
 
 app.post("/api/run", (req, res) => {
   if (scraperIsRunning) {
-    return res.status(409).json({
-      success: false,
-      error: "Scraper is already running.",
-    });
+    res.status(409).type("text/plain").send("Scraper is already running.");
+    return;
   }
 
   try {
@@ -72,56 +70,50 @@ app.post("/api/run", (req, res) => {
     fs.writeFileSync(
       LOCAL_CONFIG_PATH,
       JSON.stringify(finalConfig, null, 2) + "\n",
-      "utf8",
+      "utf8"
     );
 
     fs.writeFileSync(URLS_PATH, cleanUrls.join("\n") + "\n", "utf8");
 
     scraperIsRunning = true;
 
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    res.write("Starting scraper...\n\n");
+
     const scraper = spawn(process.execPath, ["src/index.js"], {
       cwd: PROJECT_ROOT,
     });
 
-    let output = "";
-    let errorOutput = "";
-
     scraper.stdout.on("data", (data) => {
-      output += data.toString();
+      res.write(data.toString());
     });
 
     scraper.stderr.on("data", (data) => {
-      errorOutput += data.toString();
+      res.write(data.toString());
     });
 
     scraper.on("close", (code) => {
       scraperIsRunning = false;
 
-      res.json({
-        success: code === 0,
-        exitCode: code,
-        output,
-        errorOutput,
-      });
+      res.write(`\n\nScraper finished with exit code ${code}.\n`);
+      res.end();
     });
 
     scraper.on("error", (error) => {
       scraperIsRunning = false;
 
-      res.status(500).json({
-        success: false,
-        error: "Could not start scraper.",
-        details: error.message,
-      });
+      res.write(`\nCould not start scraper: ${error.message}\n`);
+      res.end();
     });
   } catch (error) {
     scraperIsRunning = false;
 
-    res.status(500).json({
-      success: false,
-      error: "Could not run scraper.",
-      details: error.message,
-    });
+    res.status(500).type("text/plain").send(
+      `Could not run scraper.\n${error.message}`
+    );
   }
 });
 
