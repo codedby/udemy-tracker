@@ -3,3 +3,4 @@ output/*.csv
 browser-profile/
 .DS_Store
 urls.txt
+src/config.local.json

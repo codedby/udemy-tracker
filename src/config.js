@@ -1,12 +1,11 @@
-module.exports = {
-  COURSE_DELAY_MIN_MS: 90000,
-  COURSE_DELAY_MAX_MS: 180000,
+const fs = require("fs");
+const path = require("path");
 
-  INSTRUCTOR_DELAY_MIN_MS: 30000,
-  INSTRUCTOR_DELAY_MAX_MS: 60000,
+const defaultConfigPath = path.join(__dirname, "config.json");
+const localConfigPath = path.join(__dirname, "config.local.json");
 
-  RETRY_DELAY_MIN_MS: 180000,
-  RETRY_DELAY_MAX_MS: 300000,
+const configPath = fs.existsSync(localConfigPath)
+  ? localConfigPath
+  : defaultConfigPath;
 
-  MAX_COURSES_PER_RUN: 20,
-};
+module.exports = require(configPath);
